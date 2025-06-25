@@ -1,0 +1,757 @@
+# Project Plan: Pulse - Health and Wellness Platform
+
+## 1. Introduction and Overview
+
+Pulse is a comprehensive health and wellness platform designed to empower users to track, manage, and improve their physical and mental well-being. It will offer personalized coaching, real-time health data tracking, and seamless integration with popular fitness devices. The platform aims to provide a holistic view of a user's health, foster healthy habits, and offer actionable insights.
+
+**Core Objectives:**
+- Enable users to track various health metrics (activity, sleep, nutrition, mood).
+- Provide personalized coaching and goal-setting based on user data.
+- Integrate with common fitness devices and health platforms (e.g., Apple Health, Google Fit).
+- Offer intuitive dashboards and reporting for progress visualization.
+- Ensure data privacy and security.
+
+## 2. System Architecture
+
+The system will adopt a microservices-oriented architecture (or at least a clear separation of concerns) to ensure scalability, maintainability, and independent deployment of components. Communication between services will be primarily via RESTful APIs and asynchronous messaging where appropriate. The mobile application will be the primary client interacting with the backend API.
+
+**Architectural Layers:**
+1.  **Client Layer**: Mobile Application (React Native).
+2.  **API Gateway Layer**: Nginx/AWS API Gateway for routing, security, and rate limiting.
+3.  **Backend Services Layer**:
+    *   **User Service**: Manages user profiles, authentication, and authorization.
+    *   **Health Data Service**: Stores and retrieves all health-related metrics.
+    *   **Coaching Service**: Implements personalized coaching logic, recommendations, and goal management.
+    *   **Integration Service**: Handles data synchronization with external fitness devices and platforms.
+    *   **Notification Service**: Manages push notifications and in-app alerts.
+4.  **Asynchronous Processing Layer**: Message queue (AWS SQS/Kafka) for high-throughput data ingestion and background tasks.
+5.  **Database Layer**: PostgreSQL for relational data, potentially specialized databases for time-series or analytics if needed later.
+6.  **Monitoring & Logging Layer**: Centralized logging and monitoring tools.
+
+**Chosen Technologies:**
+-   **Backend**: Python 3.10+ with FastAPI framework (for performance, async capabilities, and great developer experience).
+-   **Database**: PostgreSQL 14+ (primary data store for structured data).
+-   **Mobile App**: React Native (for cross-platform iOS/Android development).
+-   **Asynchronous Messaging**: AWS SQS (Simple Queue Service).
+-   **Cloud Platform**: Amazon Web Services (AWS).
+-   **Containerization**: Docker.
+-   **Orchestration**: AWS ECS Fargate (for serverless container deployment) or Kubernetes (for larger scale, future consideration). Starting with ECS Fargate for simplicity.
+-   **Authentication**: JWT (JSON Web Tokens) with OAuth 2.0 flows.
+
+**Repository Structure:**
+A single monorepo will be used to house all project components initially for simplified development and deployment, with clear directory separation:
+```
+project/
+├── backend/               # FastAPI services
+│   ├── src/
+│   ├── tests/
+│   └── Dockerfile
+├── mobile-app/            # React Native application
+│   ├── src/
+│   ├── tests/
+│   └── package.json
+├── infrastructure/        # IaC (Terraform/CloudFormation for AWS resources)
+│   ├── aws/
+│   └── Dockerfile.nginx # For API Gateway if not using AWS API Gateway directly
+├── docs/                  # Project documentation, API specs
+└── README.md
+```
+
+## 3. Core Components Detail
+
+### 3.1. User Management & Authentication Service
+
+**Core Functionality:**
+- User registration (email/password, social login - later phase).
+- User login/logout.
+- User profile management (name, age, gender, height, weight, activity level, health goals).
+- Password reset functionality.
+- Token-based authentication (JWT).
+
+**Technical Design & Architecture:**
+- **Framework**: FastAPI.
+- **Database**: PostgreSQL (user table, profile table).
+- **Authentication**: User credentials exchanged for JWTs. JWTs will contain minimal user info (user_id) and role. Tokens will have an expiry and refresh mechanism.
+- **Password Hashing**: BCrypt or Argon2 (via `passlib` library).
+- **API Endpoints**:
+    - `POST /api/v1/auth/register`
+    - `POST /api/v1/auth/login`
+    - `POST /api/v1/auth/logout` (server-side token invalidation, e.g., blacklist)
+    - `POST /api/v1/auth/refresh-token`
+    - `GET /api/v1/users/me` (requires authentication)
+    - `PUT /api/v1/users/me` (requires authentication)
+    - `POST /api/v1/auth/forgot-password`
+    - `POST /api/v1/auth/reset-password`
+
+**User Experience:**
+- Clear, intuitive registration and login forms.
+- Password strength indicator during registration.
+- Error messages for invalid credentials or missing fields.
+- Secure password reset flow via email.
+
+**Data Management:**
+- `users` table: `id (PK)`, `email (UNIQUE)`, `password_hash`, `salt`, `created_at`, `updated_at`, `is_active`.
+- `user_profiles` table: `user_id (PK, FK to users)`, `first_name`, `last_name`, `date_of_birth`, `gender`, `height_cm`, `weight_kg`, `activity_level`, `health_goals_json`.
+- JWTs stored client-side (e.g., secure storage on mobile). Server-side blacklist for logout/revocation.
+
+**Error Handling & Edge Cases:**
+- Invalid credentials, email already registered, weak passwords.
+- Token expiration, invalid tokens.
+- Rate limiting on login attempts to prevent brute force attacks.
+
+**Security Considerations:**
+- HTTPS for all API communication.
+- Password hashing (Argon2 recommended).
+- JWT signing with strong secrets.
+- Input validation to prevent injection attacks (SQL, XSS).
+- OAuth2.0 implicit/PKCE flow for mobile clients.
+- Token revocation mechanism (short-lived access tokens, long-lived refresh tokens, blacklist for revoked tokens).
+
+**Performance & Scalability:**
+- Stateless JWTs allow horizontal scaling of backend services.
+- Database indexing on `email` for fast lookups.
+
+**Deployment & Infrastructure:**
+- Deployed as a containerized FastAPI application on AWS ECS Fargate.
+- PostgreSQL RDS instance.
+
+**Test-Driven Development Verification:**
+- **Immediate Verification**: Manual API calls using `curl` or Postman to test registration, login, and profile update.
+- **Incremental Testing**:
+    1.  **Unit Tests**: Test password hashing utility functions, JWT encoding/decoding functions, individual FastAPI route handlers (isolating business logic).
+    2.  **Integration Tests**: Test the full API endpoints using an in-memory SQLite database or a test PostgreSQL container to verify database interactions and JWT flow.
+    3.  **End-to-End Tests**: Simulate user registration, login, and profile update via the React Native app hitting the deployed backend.
+
+**Testing Strategy:**
+- **Unit Tests**: Using `pytest`. Test pure functions, utility modules.
+  ```python
+  # Example: test_auth_utils.py
+  def test_verify_password():
+      hashed = hash_password("strongpassword")
+      assert verify_password("strongpassword", hashed)
+      assert not verify_password("wrongpassword", hashed)
+  ```
+- **Integration Tests**: Using `pytest` with `httpx` (FastAPI test client). Use `testcontainers` for a temporary PostgreSQL instance or mock the database interactions using an ORM's testing utilities.
+  ```python
+  # Example: test_users_api.py
+  def test_register_and_login(client, db_session): # client from FastAPI TestClient, db_session from fixture
+      response = client.post("/api/v1/auth/register", json={"email": "test@example.com", "password": "Password123!"})
+      assert response.status_code == 201
+      # ... further tests for login, profile update
+  ```
+- **End-to-End Tests**: Using Detox (for React Native) or Playwright/Cypress if a web frontend is developed. Focus on critical user journeys like registration -> login -> update profile.
+- **Mocking Strategy**:
+    - For Unit tests: Minimal mocking. `passlib` functions are pure and don't need mocks.
+    - For Integration tests: Mock external email service for password reset. Use `pytest-mock` or `unittest.mock.patch`. Database will be a real test DB (testcontainers) or in-memory (SQLite) if compatible.
+- **Testing Tools**: `pytest`, `httpx`, `passlib` for password hashing, `python-jose` for JWTs, `SQLAlchemy` for ORM, `testcontainers` for integration DB testing.
+- **Test Data Management**: Use factory patterns (`factory_boy`) or simple dictionary fixtures to generate test user data. Database cleanup (e.g., truncate tables) after each test or test suite run using `pytest` fixtures.
+
+### 3.2. Health Tracking & Data Ingestion Service
+
+**Core Functionality:**
+- Receive and store various health metrics: steps, distance, active calories, heart rate, sleep duration/phases, body weight, blood pressure, blood glucose, mood, nutrition (macros/micros).
+- Support real-time and batch data ingestion.
+- Data aggregation and summarization.
+
+**Technical Design & Architecture:**
+- **Framework**: FastAPI.
+- **Database**: PostgreSQL (primary). Potentially InfluxDB or TimescaleDB for time-series data if volume/query patterns demand. Start with PostgreSQL.
+- **Data Ingestion**:
+    - Direct API endpoints for manual user input from the mobile app.
+    - AWS SQS queue for high-throughput, asynchronous data from Integration Service (e.g., wearable syncs).
+- **API Endpoints**:
+    - `POST /api/v1/health/metrics` (bulk upload of various metric types)
+    - `GET /api/v1/health/metrics` (query metrics by type, date range)
+    - `GET /api/v1/health/summary` (aggregated daily/weekly/monthly summaries)
+    - Specific endpoints for `steps`, `sleep`, `nutrition`, etc., for finer control.
+- **Data Model**: Generic `health_metrics` table with `user_id`, `metric_type` (enum: 'steps', 'heart_rate', 'sleep'), `value`, `unit`, `timestamp`, `metadata_json` (for specific details like `sleep_phases` or `food_item_details`).
+
+**User Experience:**
+- Intuitive forms for manual data entry.
+- Visual feedback on successful data sync/upload.
+- Clear display of tracked metrics in dashboards.
+
+**Data Management:**
+- `health_metrics` table:
+    - `id (PK)`
+    - `user_id (FK to users)`
+    - `metric_type (ENUM: 'steps', 'heart_rate', 'sleep', 'weight', 'nutrition', 'mood', etc.)`
+    - `value (FLOAT)`
+    - `unit (VARCHAR)`
+    - `timestamp (TIMESTAMP WITH TIME ZONE)`
+    - `source (VARCHAR: 'manual', 'apple_health', 'google_fit', 'garmin', etc.)`
+    - `metadata_json (JSONB)` - e.g., `{ "sleep_phases": {"REM": "2h", "Deep": "1h"}, "food_name": "apple", "calories": 95 }`
+- Indexing on `user_id`, `metric_type`, `timestamp` for efficient querying.
+
+**Error Handling & Edge Cases:**
+- Invalid metric values (e.g., negative steps).
+- Duplicate data points (handled by upsert logic if applicable).
+- Data parsing errors from external sources (quarantine and log).
+
+**Security Considerations:**
+- Row-level security: Users can only access their own health data.
+- Data encryption at rest (PostgreSQL Transparent Data Encryption or AWS RDS encryption) and in transit (HTTPS).
+- Strict input validation for all incoming data.
+
+**Performance & Scalability:**
+- Asynchronous data ingestion via SQS to decouple data producers from the processing logic.
+- Efficient database indexing.
+- Partitioning/sharding of `health_metrics` table based on `user_id` or `timestamp` if data volume becomes extreme.
+
+**Deployment & Infrastructure:**
+- Containerized FastAPI application on AWS ECS Fargate.
+- AWS SQS queue for incoming data.
+- PostgreSQL RDS instance.
+
+**Test-Driven Development Verification:**
+- **Immediate Verification**: Send a `curl` request to the `/metrics` endpoint with valid JSON payload. Check DB directly. Send a message to SQS queue and confirm processing.
+- **Incremental Testing**:
+    1.  **Unit Tests**: Test data validation logic, data aggregation functions (e.g., calculate daily average heart rate).
+    2.  **Integration Tests**: Test the API endpoint for data ingestion and retrieval with a test database. Test SQS message processing.
+    3.  **End-to-End Tests**: Simulate data entry from the mobile app, verify it appears on the dashboard. Simulate a full device sync flow (from Integration Service to Health Data Service).
+
+**Testing Strategy:**
+- **Unit Tests**: `pytest`. Test Pydantic models for data validation, utility functions.
+  ```python
+  # Example: test_data_processing.py
+  def test_daily_average_calculation():
+      data = [{"value": 70, "timestamp": "...", "type": "heart_rate"}, ...]
+      assert calculate_average_heart_rate(data, "2023-01-01") == expected_average
+  ```
+- **Integration Tests**: `pytest` with `httpx`. Test data persistence and retrieval using `testcontainers` for PostgreSQL. For SQS, use `moto` library to mock AWS SQS locally or `testcontainers` running a LocalStack instance.
+  ```python
+  # Example: test_health_api.py
+  def test_post_and_get_metrics(client, db_session):
+      data = {"metric_type": "steps", "value": 1000, "unit": "steps", "timestamp": "2023-01-01T10:00:00Z", "user_id": 1}
+      response = client.post("/api/v1/health/metrics", json=data)
+      assert response.status_code == 201
+      # ... retrieve and assert
+  ```
+- **End-to-End Tests**: Detox for mobile app data entry/display.
+- **Mocking Strategy**:
+    - For Unit tests: Minimal mocking.
+    - For Integration tests: Mock SQS client with `moto` to simulate sending/receiving messages. Mock external services that might be called (e.g., if there's a third-party nutrition API). Database interactions should ideally use a real test DB.
+- **Testing Tools**: `pytest`, `httpx`, `SQLAlchemy`, `testcontainers`, `moto` (for AWS services mocking).
+- **Test Data Management**: Use `factory_boy` to generate diverse sets of health metrics for different users and timeframes. Ensure cleanup for isolated tests.
+
+### 3.3. Personalized Coaching Engine Service
+
+**Core Functionality:**
+- Define and manage health goals (e.g., "lose 5kg", "run 5k", "sleep 8 hours").
+- Provide personalized recommendations based on user's health data and goals.
+- Track progress towards goals.
+- Deliver motivational messages and nudges.
+- Adapt recommendations based on user's adherence and progress.
+
+**Technical Design & Architecture:**
+- **Framework**: FastAPI (can be a dedicated service or integrated into an existing one initially).
+- **Data Source**: Health Data Service (via internal API calls or direct DB reads if co-located). User Service for profile info.
+- **Recommendation Logic**:
+    - Rule-based system for initial recommendations (e.g., IF user_goal=weight_loss AND daily_calories_avg > target_calories THEN suggest_reduce_portion_size).
+    - Later phase: Basic ML models (e.g., clustering users with similar goals/patterns, simple regression for predicting progress).
+- **API Endpoints**:
+    - `POST /api/v1/coaching/goals` (set/update goals)
+    - `GET /api/v1/coaching/goals` (retrieve current goals and progress)
+    - `GET /api/v1/coaching/recommendations` (get personalized advice)
+    - `POST /api/v1/coaching/feedback` (user feedback on recommendations)
+- **Asynchronous Processing**: Use SQS for background processing of coaching logic (e.g., nightly recommendation generation, progress updates).
+
+**User Experience:**
+- Clear goal-setting interface.
+- Actionable and easy-to-understand recommendations.
+- Progress visualizations towards goals.
+- Positive reinforcement and motivation.
+
+**Data Management:**
+- `user_goals` table: `id (PK)`, `user_id (FK)`, `goal_type`, `target_value`, `current_value`, `start_date`, `end_date`, `status (active, completed, abandoned)`.
+- `recommendations` table: `id (PK)`, `user_id (FK)`, `recommendation_text`, `type`, `generated_at`, `is_actionable`, `is_dismissed`.
+- `user_feedback` table: `id (PK)`, `recommendation_id (FK)`, `user_id (FK)`, `feedback_type (helpful, not_helpful)`, `timestamp`.
+
+**Error Handling & Edge Cases:**
+- No data available for recommendations.
+- Conflicting goals.
+- User not adhering to recommendations.
+
+**Security Considerations:**
+- Access control: Only user and authorized coaching agents can access coaching data.
+- Data privacy: Ensure sensitive health data used for coaching is pseudonymized/anonymized if shared for model training (later phase).
+
+**Performance & Scalability:**
+- Background processing of complex coaching logic via SQS and dedicated workers.
+- Caching recommendations if computationally expensive.
+
+**Deployment & Infrastructure:**
+- Containerized FastAPI application on AWS ECS Fargate.
+- AWS SQS for processing queues.
+- PostgreSQL RDS instance.
+- Potentially AWS Lambda for event-driven small tasks (e.g., daily goal progress checks).
+
+**Test-Driven Development Verification:**
+- **Immediate Verification**: Manually set a goal via API, then retrieve recommendations via API. Confirm output matches expectations based on simple rules.
+- **Incremental Testing**:
+    1.  **Unit Tests**: Test individual recommendation rules, progress calculation functions.
+    2.  **Integration Tests**: Test the entire coaching pipeline: goal setting API -> background worker processing -> recommendation generation -> recommendation retrieval API. Use a mocked Health Data Service if necessary, or a real test DB.
+    3.  **End-to-End Tests**: Set a goal from the mobile app, log some data, verify recommendations appear and progress is tracked on the UI.
+
+**Testing Strategy:**
+- **Unit Tests**: `pytest`. Test functions implementing specific coaching rules (`if user has X, recommend Y`).
+  ```python
+  # Example: test_coaching_rules.py
+  def test_weight_loss_recommendation():
+      user_data = {"current_weight": 70, "target_weight": 65, "activity_level": "moderate"}
+      assert generate_recommendation("weight_loss", user_data) == "Reduce caloric intake by 300 calories."
+  ```
+- **Integration Tests**: `pytest` with `httpx`. Use `testcontainers` for the database. Mock the Health Data Service API calls if the service is separate and complex to set up in tests. If using SQS, mock the SQS client with `moto`.
+- **End-to-End Tests**: Detox.
+- **Mocking Strategy**:
+    - For Unit tests: Minimal.
+    - For Integration tests: Mock downstream services (e.g., Health Data Service API client) to control their responses and isolate the coaching service logic. Use `pytest-mock`.
+- **Testing Tools**: `pytest`, `httpx`, `SQLAlchemy`, `testcontainers`, `moto`.
+- **Test Data Management**: Use `factory_boy` to create diverse `user_goals` and simulate `health_metrics` data to test various recommendation scenarios.
+
+### 3.4. Integration Service (Fitness Devices & Health Platforms)
+
+**Core Functionality:**
+- Authenticate and authorize with external fitness devices and health platforms (e.g., Apple Health, Google Fit, Garmin, Fitbit).
+- Synchronize historical and real-time health data from these platforms.
+- Map external data schemas to Pulse's internal `health_metrics` schema.
+
+**Technical Design & Architecture:**
+- **Framework**: FastAPI.
+- **External APIs**: OAuth 2.0 for user authorization with platforms. REST APIs for data retrieval.
+- **Data Flow**:
+    1.  User initiates connection from mobile app.
+    2.  Mobile app directs user to external platform's OAuth flow.
+    3.  External platform redirects back to Pulse backend with authorization code.
+    4.  Integration Service exchanges code for access/refresh tokens.
+    5.  Scheduled jobs or webhook listeners fetch data from external platforms.
+    6.  Data transformed and pushed to Health Data Service via SQS queue.
+- **API Endpoints**:
+    - `POST /api/v1/integrations/{platform_name}/connect` (initiates OAuth flow)
+    - `GET /api/v1/integrations/{platform_name}/callback` (OAuth callback endpoint)
+    - `GET /api/v1/integrations/connected-devices`
+    - `POST /api/v1/integrations/{platform_name}/sync` (manual sync trigger)
+
+**User Experience:**
+- Clear instructions for connecting devices.
+- Feedback on connection status and last sync time.
+- Error messages if connection fails.
+
+**Data Management:**
+- `user_integrations` table: `id (PK)`, `user_id (FK)`, `platform_name`, `access_token` (encrypted), `refresh_token` (encrypted), `token_expiry`, `last_sync_time`, `status`.
+- External platform data not stored directly; transformed and sent to Health Data Service.
+
+**Error Handling & Edge Cases:**
+- Failed API calls to external services.
+- Token expiry/revocation.
+- Data parsing errors from external formats.
+- Rate limits from external APIs.
+
+**Security Considerations:**
+- Encrypt access and refresh tokens at rest.
+- Secure handling of OAuth callbacks.
+- Strict scope management for external platform access.
+- Validate all data received from external sources.
+
+**Performance & Scalability:**
+- Asynchronous data fetching and processing using background workers (e.g., Celery or native FastAPI background tasks triggered by SQS).
+- Batch processing for historical data syncs.
+- Exponential backoff for retries on external API failures.
+
+**Deployment & Infrastructure:**
+- Containerized FastAPI application on AWS ECS Fargate.
+- AWS SQS for outgoing data to Health Data Service and incoming webhooks if applicable.
+- PostgreSQL RDS instance.
+
+**Test-Driven Development Verification:**
+- **Immediate Verification**: Use Postman/Insomnia to simulate OAuth flow callback and verify token storage. Manually trigger a mock sync and check SQS queue.
+- **Incremental Testing**:
+    1.  **Unit Tests**: Test data mapping functions (e.g., Apple Health steps to Pulse steps). Test OAuth client logic (token exchange).
+    2.  **Integration Tests**: Test the full OAuth flow with mocked external services (e.g., using `responses` library to mock `requests` calls to Apple/Google APIs). Verify that data is correctly pushed to the SQS queue (mock SQS client).
+    3.  **End-to-End Tests**: Simulate connecting a device from the mobile app, triggering a sync, and verifying data appears in the Pulse dashboard.
+
+**Testing Strategy:**
+- **Unit Tests**: `pytest`. Test data transformation logic.
+  ```python
+  # Example: test_data_mapping.py
+  def test_map_apple_health_steps():
+      apple_data = {"type": "HKQuantityTypeIdentifierStepCount", "value": 1000, "unit": "count", "startDate": "...", "endDate": "..."}
+      pulse_data = map_apple_health_to_pulse(apple_data)
+      assert pulse_data["metric_type"] == "steps"
+      assert pulse_data["value"] == 1000
+  ```
+- **Integration Tests**: `pytest`. Use `responses` library to mock HTTP calls to external fitness APIs. Mock the SQS client with `moto`.
+  ```python
+  # Example: test_google_fit_integration.py
+  @responses.activate
+  def test_google_fit_sync(client, db_session):
+      # Mock Google Fit OAuth and data endpoints
+      responses.add(responses.POST, "https://oauth2.googleapis.com/token", json={"access_token": "mock_token", "refresh_token": "mock_refresh"}, status=200)
+      responses.add(responses.GET, "https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate", json={"bucket": [{"dataset": [{"point": [{"value": [{"intVal": 1000}]}]}]}]}, status=200)
+
+      # Simulate OAuth callback and sync
+      response = client.get("/api/v1/integrations/google-fit/callback?code=mock_code")
+      assert response.status_code == 200
+      # Trigger sync and assert SQS queue received message (mocked SQS)
+  ```
+- **End-to-End Tests**: Detox (requires actual interaction with real external services or a highly sophisticated mock setup). Prioritize critical paths.
+- **Mocking Strategy**:
+    - For Unit tests: Minimal.
+    - For Integration tests: Heavily rely on `responses` for HTTP mocking and `moto` for AWS services. Avoid hitting real external APIs during tests.
+- **Testing Tools**: `pytest`, `httpx`, `SQLAlchemy`, `requests-mock` or `responses` for HTTP mocking, `moto`.
+- **Test Data Management**: Create pre-defined JSON responses that mimic actual data from Apple Health, Google Fit, etc., for mocking purposes.
+
+### 3.5. Dashboard & Reporting (Mobile App Component)
+
+**Core Functionality:**
+- Visualize health metrics over time (daily, weekly, monthly, yearly charts).
+- Display progress towards goals.
+- Provide summaries and insights based on collected data.
+- Present personalized coaching recommendations.
+
+**Technical Design & Architecture:**
+- **Platform**: React Native.
+- **Data Source**: Backend API (Health Data Service, Coaching Service).
+- **Charting Library**: `react-native-chart-kit` or `Victory Native`.
+- **UI/UX Framework**: React Native Paper or similar for consistent design.
+
+**User Experience:**
+- Clean, intuitive dashboards.
+- Interactive charts (zoom, pan).
+- Customizable views (e.g., choose which metrics to display).
+- Easy navigation between different health categories.
+
+**Data Management:**
+- Data fetched on demand from backend APIs.
+- Local caching on device for offline viewing or faster load times (e.g., AsyncStorage, RealmDB for React Native).
+
+**Error Handling & Edge Cases:**
+- No data available to display (show friendly message).
+- API errors (display error message, retry option).
+- Network connectivity issues.
+
+**Security Considerations:**
+- Securely store JWT tokens on the device (e.g., using `react-native-keychain` for iOS Keychain/Android Keystore).
+- Data privacy: Do not store sensitive health data unencrypted on the device.
+
+**Performance & Scalability:**
+- Efficient API calls (pagination, lazy loading).
+- Optimize rendering of large datasets in charts.
+
+**Deployment & Infrastructure:**
+- Mobile app deployed to Apple App Store and Google Play Store.
+
+**Test-Driven Development Verification:**
+- **Immediate Verification**: Run the app on an emulator/device, manually log data, see if it appears.
+- **Incremental Testing**:
+    1.  **Unit Tests**: Test individual React Native components for rendering with different props, utility functions for data formatting/transformation.
+    2.  **Integration Tests**: Test screen components with mocked API calls (e.g., using `msw` for mock service worker in development). Verify component interactions and state changes.
+    3.  **End-to-End Tests**: Detox tests simulating user interactions on dashboards, verifying data displays correctly and interactions work.
+
+**Testing Strategy:**
+- **Unit Tests**: `Jest` with `React Native Testing Library`.
+  ```javascript
+  // Example: test_MetricCard.js
+  import { render } from '@testing-library/react-native';
+  import MetricCard from '../MetricCard';
+  test('renders metric name and value', () => {
+    const { getByText } = render(<MetricCard name="Steps" value="5000" />);
+    expect(getByText('Steps')).toBeTruthy();
+    expect(getByText('5000')).toBeTruthy();
+  });
+  ```
+- **Integration Tests**: `Jest` with `React Native Testing Library` and `msw` (Mock Service Worker) for API mocking.
+  ```javascript
+  // Example: test_DashboardScreen.js
+  import { setupServer } from 'msw/node';
+  import { rest } from 'msw';
+  const server = setupServer(
+    rest.get('/api/v1/health/summary', (req, res, ctx) => {
+      return res(ctx.json({ steps: 10000, calories_burned: 500 }));
+    })
+  );
+  beforeAll(() => server.listen());
+  afterEach(() => server.resetHandlers());
+  afterAll(() => server.close());
+
+  test('fetches and displays health summary', async () => {
+    const { findByText } = render(<DashboardScreen />);
+    expect(await findByText('10000 Steps')).toBeTruthy();
+  });
+  ```
+- **End-to-End Tests**: Detox for simulating user flows across multiple screens.
+- **Mocking Strategy**:
+    - For Unit tests: Jest mocks for `react-native` modules.
+    - For Integration tests: `msw` for mocking API requests. This provides a network-level mock, making tests more realistic.
+- **Testing Tools**: `Jest`, `React Native Testing Library`, `msw`, `Detox`.
+- **Test Data Management**: Use static JSON files for mock API responses (`msw`). Generate dynamic data for charts in Detox tests.
+
+### 3.6. Notifications Service
+
+**Core Functionality:**
+- Send push notifications to mobile devices (e.g., "Time to log your meal!", "You're close to your step goal!").
+- Send in-app notifications.
+- Manage notification preferences per user.
+
+**Technical Design & Architecture:**
+- **Framework**: FastAPI (can be a standalone microservice or part of Coaching/User Service initially).
+- **Push Notification Provider**: AWS SNS (Simple Notification Service) Mobile Push or Firebase Cloud Messaging (FCM). FCM is often simpler for cross-platform mobile.
+- **API Endpoints**:
+    - `POST /api/v1/notifications/register-device` (for device tokens)
+    - `PUT /api/v1/notifications/preferences`
+- **Triggering**: Messages sent to SQS queue from Coaching Service or other services to trigger notifications. A dedicated worker consumes these messages and sends them via FCM/SNS.
+
+**User Experience:**
+- User control over notification types and frequency.
+- Clear and actionable notification content.
+
+**Data Management:**
+- `device_tokens` table: `id (PK)`, `user_id (FK)`, `device_token`, `platform (ios/android)`, `created_at`, `is_active`.
+- `notification_preferences` table: `id (PK)`, `user_id (FK)`, `notification_type`, `enabled (boolean)`.
+
+**Error Handling & Edge Cases:**
+- Invalid device tokens (handle FCM/SNS errors, mark token as inactive).
+- User opted out of notifications.
+
+**Security Considerations:**
+- Ensure device tokens are associated only with the correct user.
+- Do not include sensitive information directly in notification payloads.
+
+**Performance & Scalability:**
+- Asynchronous processing of notification requests via SQS.
+- FCM/SNS handle high-volume message delivery.
+
+**Deployment & Infrastructure:**
+- Containerized FastAPI application on AWS ECS Fargate.
+- AWS SQS queue.
+- Integration with Firebase for FCM or AWS SNS.
+
+**Test-Driven Development Verification:**
+- **Immediate Verification**: Manually register a device token via API. Send a test notification message to SQS queue and verify it appears on a test device.
+- **Incremental Testing**:
+    1.  **Unit Tests**: Test logic for parsing notification requests, formatting payloads for FCM/SNS.
+    2.  **Integration Tests**: Test the process of receiving an SQS message and attempting to send a notification (mock FCM/SNS client).
+    3.  **End-to-End Tests**: Simulate a user reaching a goal, verifying a push notification appears on their device.
+
+**Testing Strategy:**
+- **Unit Tests**: `pytest`. Test helper functions for FCM payload construction.
+- **Integration Tests**: `pytest`. Mock the FCM/SNS client using `unittest.mock.patch` or `pytest-mock`. Mock SQS with `moto`.
+  ```python
+  # Example: test_notification_service.py
+  def test_send_push_notification(sqs_client_mock, fcm_client_mock, client):
+      # Simulate a message arriving in SQS
+      sqs_message = {"user_id": 1, "message": "Congrats!"}
+      # Assume a worker picks this up and calls send_fcm_notification
+      # Test the worker function that consumes from SQS and calls FCM client
+      fcm_client_mock.send_message.assert_called_once_with(...)
+  ```
+- **End-to-End Tests**: Detox. Requires configuration with actual FCM for push notifications testing on real devices/emulators.
+- **Mocking Strategy**:
+    - For Unit tests: Minimal.
+    - For Integration tests: Mock FCM/SNS SDK clients and AWS SQS client.
+- **Testing Tools**: `pytest`, `moto`, `pytest-mock`.
+- **Test Data Management**: Use factory patterns for `device_tokens` and `notification_preferences`.
+
+## 4. Infrastructure and Deployment
+
+**Cloud Provider**: Amazon Web Services (AWS)
+
+**Core AWS Services:**
+-   **Compute**: AWS ECS Fargate for running FastAPI services in containers. Eliminates server management.
+-   **Database**: AWS RDS for PostgreSQL (managed relational database service).
+-   **Messaging**: AWS SQS (Simple Queue Service) for asynchronous communication between services and data ingestion.
+-   **Authentication**: AWS Cognito for user pool (optional, could replace custom User Service for basic auth later for speed). Stick to custom User Service initially as defined.
+-   **Storage**: AWS S3 for static assets (e.g., app images, user avatars).
+-   **Networking**: AWS VPC, subnets, security groups, load balancers (Application Load Balancer - ALB).
+-   **DNS**: AWS Route 53.
+-   **CDN**: AWS CloudFront (for mobile app assets, API caching).
+-   **Monitoring & Logging**: AWS CloudWatch, AWS X-Ray (for distributed tracing).
+
+**Deployment Strategy:**
+-   **Infrastructure as Code (IaC)**: Terraform will be used to define and provision all AWS resources. This ensures reproducibility, version control, and consistency.
+-   **CI/CD Pipeline**:
+    -   **Backend**: GitHub Actions/AWS CodePipeline to build Docker images, push to AWS ECR (Elastic Container Registry), and deploy to AWS ECS Fargate.
+    -   **Mobile App**: GitHub Actions for building iOS/Android bundles, potentially Fastlane for automated deployment to App Store/Google Play.
+-   **Environment Strategy**: `development`, `staging`, `production`. Each environment will have its own dedicated AWS resources.
+
+**CI/CD Pipeline Steps (Backend Example):**
+1.  **Code Commit**: Developer pushes code to GitHub.
+2.  **Linting & Static Analysis**: Run linters (flake8, Black), security scanners (bandit).
+3.  **Unit Tests**: Run `pytest` unit tests for the backend.
+4.  **Build Docker Image**: Build `backend` Docker image.
+5.  **Integration Tests**: Run `pytest` integration tests against a temporary test environment or mocked services.
+6.  **Push to ECR**: Push Docker image to AWS ECR.
+7.  **Deploy to Staging**: Update ECS service to deploy new image to `staging` environment.
+8.  **Automated E2E Tests**: Run E2E tests against `staging` environment.
+9.  **Manual QA / Approval**: Manual testing on staging.
+10. **Deploy to Production**: Manual or automated deployment to `production` (after approval).
+
+**Test-Driven Development Verification (Deployment):**
+- **Immediate Verification**:
+    - Deploy a simple "Hello World" container to ECS Fargate.
+    - Verify DNS records resolve correctly.
+    - Access the `health_check` endpoint of a deployed service.
+- **Incremental Testing**:
+    1.  **Unit Tests (IaC)**: Use `terratest` or similar tools for Terraform configuration validation.
+    2.  **Integration Tests (Deployment)**: Deploy a minimal service and verify it can connect to its database and message queue.
+    3.  **End-to-End Tests**: Deploy the full application stack to a temporary environment and run comprehensive E2E tests.
+
+**Testing Strategy (Deployment):**
+- **Unit Tests**: `terratest` or `checkov` for IaC linting.
+- **Integration Tests**: Deploy a subset of the infrastructure in a temporary AWS account/region or isolated VPC, verify connectivity and basic functionality (e.g., DB connection from a container).
+- **End-to-End Tests**: Deploy to a dedicated staging environment, run comprehensive E2E tests as part of the CI/CD pipeline.
+- **Mocking Strategy**: For IaC, mock AWS API calls during local testing of Terraform modules if necessary (e.g., using `moto` for local AWS stack).
+- **Testing Tools**: `terraform`, `terratest`, `aws-cli`, `Docker`.
+
+## 5. Testing and Quality Assurance
+
+**Testing Hierarchy (Implement in this order):**
+
+1.  **Unit Tests - Simple Cases First**
+    -   **Focus**: Smallest testable units (functions, methods, classes).
+    -   **Goal**: Verify correctness of isolated logic.
+    -   **Approach**: Test happy paths, then edge cases. Use real objects instead of mocks when possible. Only mock unavoidable external dependencies.
+    -   **Tools**: `pytest` (Python), `Jest` (React Native).
+
+2.  **Integration Tests - Minimal Setup**
+    -   **Focus**: Interactions between components or services.
+    -   **Goal**: Verify correct communication and data flow.
+    -   **Approach**: Use lightweight, in-memory alternatives (e.g., SQLite, `moto` for AWS services). Prefer real implementations over complex mocks (e.g., `testcontainers` for real PostgreSQL instance in test environment).
+    -   **Tools**: `pytest` + `httpx`, `testcontainers`, `moto` (Python); `Jest` + `msw` (React Native).
+
+3.  **End-to-End Tests - Critical Paths Only**
+    -   **Focus**: Simulate real user journeys through the entire system.
+    -   **Goal**: Verify core business flows work as expected from a user perspective.
+    -   **Approach**: Keep scenarios simple and maintainable. Focus on the most important user journeys (e.g., register, log in, track steps, view dashboard).
+    -   **Tools**: `Detox` (React Native).
+
+**Mocking Strategy - SIMPLIFIED APPROACH:**
+-   **Prefer Dependency Injection**: Design components (especially backend services) to accept their dependencies (e.g., database sessions, SQS clients, HTTP clients) through constructors or method arguments. This makes swapping them for test doubles straightforward.
+-   **Use Simple Stubs**: For predictable external services (e.g., a simple API that always returns a fixed response), use stubs (objects with hardcoded responses) instead of full-fledged mocks if they suffice.
+-   **Mock at System Boundaries**:
+    -   **External APIs**: Mock calls to third-party services (Apple Health, Google Fit, FCM). Use libraries like `responses` (Python) or `msw` (JS/React Native).
+    -   **Databases**: For unit tests, use in-memory alternatives (SQLite) or mock the ORM layer. For integration tests, use `testcontainers` to spin up a real, temporary database instance.
+    -   **Cloud Services**: Use libraries like `moto` (Python) to simulate AWS services locally.
+-   **Avoid Mocking Internal Components**: Unless absolutely necessary for isolation, avoid complex mocks for internal service-to-service communication. Test them via integration tests with real instances.
+
+**Test Data Management:**
+-   **Isolation**: Each test or test suite should ideally run with its own isolated data set to prevent test interference.
+-   **Factories**: Use libraries like `factory_boy` (Python) or custom factory functions (JS/TS) to easily generate valid, realistic test data for various entities (users, metrics, goals).
+-   **Database Fixtures**: Use `pytest` fixtures to set up and tear down test data in the database (e.g., creating fresh tables, inserting initial data, truncating tables after tests).
+-   **API Mocks**: For UI tests, define clear JSON files or objects representing mock API responses.
+
+## 6. Monitoring & Logging
+
+**Logging:**
+-   **Centralized Logging**: All application logs (backend services, mobile app crashes) will be collected and sent to a centralized logging solution.
+-   **Tool**: AWS CloudWatch Logs.
+-   **Format**: Structured logging (JSON) for easier parsing and querying.
+-   **Levels**: Use standard logging levels (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+-   **Context**: Include request IDs, user IDs, service names, and timestamps in all logs for traceability.
+
+**Monitoring:**
+-   **Application Performance Monitoring (APM)**: Track response times, error rates, throughput for all API endpoints.
+-   **Tool**: AWS CloudWatch Metrics, potentially integrate with AWS X-Ray for distributed tracing across services.
+-   **System Metrics**: Monitor CPU utilization, memory usage, network I/O for EC2 instances/Fargate tasks.
+-   **Database Monitoring**: Track database connections, query performance, disk usage.
+-   **Alerting**: Set up CloudWatch Alarms for critical thresholds (e.g., high error rate, low disk space, high latency).
+-   **Dashboards**: Create custom CloudWatch Dashboards for a quick overview of system health.
+
+**Test-Driven Development Verification (Monitoring & Logging):**
+- **Immediate Verification**: Ensure logs appear in CloudWatch after a service starts. Check if basic metrics are reported.
+- **Incremental Testing**:
+    1.  **Unit Tests**: Test log formatting functions.
+    2.  **Integration Tests**: Run an integration test that triggers an error, verify the error log appears in the configured log handler.
+    3.  **End-to-End Tests**: Trigger an E2E test, then verify all relevant services logged their activities (e.g., request ID traceability across services).
+
+## 7. Dependencies
+
+**External Libraries/Frameworks:**
+-   **Python Backend**: FastAPI, Uvicorn, SQLAlchemy, Pydantic, Passlib, Python-jose, requests, httpx, APScheduler (for background tasks), `moto`, `testcontainers`, `pytest`, `pytest-mock`.
+-   **React Native Mobile App**: React Native, React Navigation, Redux/Zustand, React Native Paper, react-native-chart-kit, axios, `Jest`, `React Native Testing Library`, `msw`, `Detox`.
+-   **IaC**: Terraform, AWS CLI.
+
+**AWS Services (as outlined in Infrastructure section):**
+-   ECS Fargate, RDS (PostgreSQL), SQS, S3, CloudWatch, X-Ray, ALB, Route 53, ECR.
+
+**Third-Party Integrations:**
+-   Apple HealthKit API (via HealthKit JS SDK in React Native if available, or native bridge)
+-   Google Fit API
+-   Garmin Connect API (requires developer account/API key)
+-   Fitbit API
+-   Firebase Cloud Messaging (FCM) for push notifications.
+
+## 8. Potential Risks & Mitigations
+
+1.  **Risk: Data Privacy & Security Breaches**
+    -   **Mitigation**: Implement robust security measures (encryption at rest/in transit, strict access control, regular security audits, input validation, adherence to data privacy regulations like GDPR/HIPAA-like principles). Regular vulnerability scanning and penetration testing.
+
+2.  **Risk: Integration Complexity with External Fitness Devices**
+    -   **Mitigation**: Start with a limited set of integrations (e.g., Apple Health/Google Fit first due to broader device compatibility). Use a dedicated Integration Service to isolate complexity. Implement robust error handling and retry mechanisms for external API calls. Research SDKs/APIs thoroughly before development.
+
+3.  **Risk: Scalability Issues with High Data Volume (Health Metrics)**
+    -   **Mitigation**: Design for asynchronous data ingestion (SQS). Use efficient database indexing. Monitor database performance closely. Be prepared to implement database partitioning/sharding or switch to a specialized time-series database (e.g., TimescaleDB, InfluxDB) if PostgreSQL struggles.
+
+4.  **Risk: Performance Bottlenecks in Personalized Coaching Engine**
+    -   **Mitigation**: Start with simpler rule-based logic. Offload complex computations to asynchronous background jobs. Cache recommendations. Iteratively improve recommendation algorithms.
+
+5.  **Risk: Mobile App Performance & User Experience**
+    -   **Mitigation**: Follow React Native best practices. Optimize UI rendering. Implement local caching. Conduct extensive user testing and performance profiling.
+
+6.  **Risk: Vendor Lock-in (AWS/FCM)**
+    -   **Mitigation**: Use containerization (Docker) to maintain portability. Abstract cloud-specific APIs using internal interfaces where reasonable. For FCM, plan for potential alternative push notification services if needed.
+
+7.  **Risk: Regulatory Compliance (e.g., HIPAA for health data)**
+    -   **Mitigation**: Consult legal experts regarding health data regulations in target regions. Implement necessary compliance features (e.g., audit trails, data access logging, secure deletion). *Note: Full HIPAA compliance is a complex undertaking and requires dedicated effort beyond this initial plan.*
+
+## 9. Development Efficiency Guidelines
+
+### Testability-First Design
+-   **Favor Composition over Inheritance**: Makes components easier to test in isolation by allowing dependencies to be passed in.
+-   **Single Responsibility Principle (SRP)**: Each class/module should have one clear purpose. This reduces complexity and makes components easier to unit test.
+-   **Avoid Static Dependencies**: Do not hardcode dependencies. Instead, inject them (e.g., pass database sessions, API clients as arguments) to allow easy swapping with test doubles.
+-   **Separate Business Logic from Infrastructure**: Keep core domain logic pure, independent of frameworks, databases, or external services. This makes business logic highly testable with simple unit tests. For example, a `calculate_bmi` function should not depend on a database connection.
+
+### Mock Complexity Reduction
+-   **Design for Testability**: The primary way to reduce mock complexity is through good design. If a component is hard to test without complex mocks, it often indicates a design flaw (e.g., too many responsibilities, tight coupling).
+-   **Use Test Doubles Hierarchy**:
+    1.  **Real implementations (preferred)**: Use actual database, API, etc., in integration tests via `testcontainers` or in-memory equivalents.
+    2.  **Fake implementations (in-memory versions)**: E.g., an in-memory user repository that mimics a database, but doesn't persist data.
+    3.  **Stubs (simple, hardcoded responses)**: For predictable dependencies, return pre-defined values.
+    4.  **Mocks (complex, behavior-verifying objects)**: Use sparingly, primarily for verifying interactions with external system boundaries (e.g., "was this message sent to SQS?").
+-   **Network Mocking**: For HTTP calls, use libraries like `responses` (Python) or `msw` (JS) that intercept network requests at a lower level, providing more realistic test environments than patching individual client instances.
+
+### Development Workflow Optimization
+-   **Iterative Development**: Break features into the smallest possible, independently deployable and testable increments. This allows for frequent verification and reduces integration headaches.
+-   **Fail Fast**: Design tests to catch issues as early as possible in the development lifecycle (e.g., unit tests first, then integration, then E2E). Automated tests should run frequently (e.g., on every commit).
+-   **Clear Success Criteria**: Before starting any feature, define exactly what "working" means and what tests will verify its functionality.
+-   **Debugging Support**:
+    -   Implement comprehensive, structured logging at appropriate levels (`INFO` for normal flow, `WARNING` for unusual but non-critical, `ERROR` for critical issues).
+    -   Use a consistent log format across services.
+    -   Incorporate distributed tracing (e.g., AWS X-Ray, OpenTelemetry) to track requests across microservices.
+    -   Provide clear, descriptive error messages in API responses and logs.
+
+## 10. Implementation Timeline (High-Level Estimation)
+
+**Phase 1: Core MVP (Minimum Viable Product) - Approx. 12-16 Weeks**
+-   **Week 1-2**: Architecture & Infrastructure Setup (VPC, initial ECS, RDS, CI/CD boilerplate).
+-   **Week 3-5**: User Management & Authentication Service (Backend + Mobile UI).
+-   **Week 6-9**: Health Tracking & Data Ingestion Service (Backend + Mobile UI for manual entry + basic data display). Focus on core metrics: steps, sleep, weight.
+-   **Week 10-12**: Initial Dashboard & Reporting (Mobile UI for visualized metrics).
+-   **Week 13-16**: Initial Integration Service (e.g., Google Fit basic sync). Basic Personalized Coaching (rule-based).
+
+**Phase 2: Enhancements & Expansion - Approx. 8-12 Weeks (Post-MVP)**
+-   Expand health metrics tracking (nutrition, mood, blood pressure).
+-   Enhance Personalized Coaching (more complex rules, basic ML models).
+-   Add more fitness device integrations (Apple Health, Garmin, Fitbit).
+-   Implement Notifications Service.
+-   Advanced reporting features.
+
+**Phase 3: Refinement & Advanced Features - Ongoing**
+-   Social features, community support.
+-   Premium features/monetization.
+-   Deeper ML integration for personalized insights.
+-   Web dashboard (if required).
+
+---
+**END OF PROJECT PLAN**
