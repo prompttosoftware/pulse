@@ -1,0 +1,60 @@
+# Python
+*.py[cod]
+__pycache__/
+*.so
+*.egg-info/
+.pytest_cache/
+
+# Build and Package
+build/
+dist/
+*.tar.gz
+*.whl
+
+# IDE and Editor
+.idea/
+.vscode/
+*.iml
+.ropeproject/
+
+# Logs and temporary files
+*.log
+.DS_Store
+.tmp
+tmp/
+
+# AWS
+.aws/
+
+# Terraform
+.terraform/
+terraform.tfstate*
+*.tfstate.*.backup
+
+# Docker
+Dockerfile.dev
+docker-compose.yml
+docker-compose.override.yml
+node_modules/
+
+# React Native
+android/
+ios/
+.env
+.expo/
+*.lock
+coverage/
+
+# Mobile App
+*.apk
+*.ipa
+*.xcarchive
+*.xcodebuild
+
+# Documentation
+docs/build/
+
+# Other
+*.swp
+*.swo
+*.bak
